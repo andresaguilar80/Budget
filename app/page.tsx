@@ -109,6 +109,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
   const [period, setPeriod] = useState("September 2026");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [transactionError, setTransactionError] = useState("");
   const [categories, setCategories] = useState(["Operations", "People", "Facilities", "Marketing", "Discretionary", "Revenue"]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" as Transaction["type"] });
@@ -174,7 +175,18 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
    };
    const addTransaction = () => {
      const amount = Number(form.amount);
-     if (!form.label.trim() || amount <= 0) return;
+     const missingFields = [
+       !form.label.trim() && "Description",
+       !form.category && "Category",
+       (!form.amount.trim() || !Number.isFinite(amount) || amount <= 0) && "Amount",
+       !form.month && "Month",
+       !form.type && "Type",
+     ].filter(Boolean) as string[];
+     if (missingFields.length > 0) {
+       setTransactionError(`Transaction cannot be recorded. Complete: ${missingFields.join(", ")}.`);
+       return;
+     }
+     setTransactionError("");
      const monthNumber = String(months.indexOf(form.month) + 1).padStart(2, "0");
      const entry = { date: `2026-${monthNumber}-18`, month: form.month, label: form.label.trim(), category: form.category, type: form.type, amount, essential: form.category !== "Discretionary" };
      setTransactions((current) => editingId === null ? [...current, { id: Date.now(), ...entry }] : current.map((item) => item.id === editingId ? { ...item, ...entry } : item));
@@ -197,7 +209,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
       <div className={styles.sidebarBottom}>{isAdmin && <button onClick={() => navigate("Settings")}>⚙ &nbsp; Settings</button>}<button onClick={logout}>↪ &nbsp; Sign out</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>{isAdmin ? "Admin" : "Member"}</small></span><span>•••</span></div></div>
      </aside>
      <section className={styles.content}>
-      <header className={styles.topbar}><div className={styles.topbarStart}><button className={styles.sidebarToggle} onClick={() => setSidebarHidden((hidden) => !hidden)} aria-label={sidebarHidden ? "Show left panel" : "Hide left panel"} title={sidebarHidden ? "Show left panel" : "Hide left panel"}>{sidebarHidden ? "☰" : "←"}</button><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span></div><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { refreshCategories().catch(() => undefined); setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
+      <header className={styles.topbar}><div className={styles.topbarStart}><button className={styles.sidebarToggle} onClick={() => setSidebarHidden((hidden) => !hidden)} aria-label={sidebarHidden ? "Show left panel" : "Hide left panel"} title={sidebarHidden ? "Show left panel" : "Hide left panel"}>{sidebarHidden ? "☰" : "←"}</button><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span></div><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { refreshCategories().catch(() => undefined); setTransactionError(""); setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
        <div className={styles.mainArea}>
          <div className={styles.intro}><div><p className={styles.kicker}>Financial control center</p><h1>{view === "Overview" ? "Good morning, Jordan." : view}</h1><p className={styles.subtitle}>{view === "Overview" ? `Here is what is happening in ${period.toLowerCase()}.` : `Review your ${view.toLowerCase()} for ${period.toLowerCase()}.`}</p></div><label className={styles.period}>Period<select value={period} onChange={(event) => setPeriod(event.target.value)}><option>Full year 2026</option>{fullMonths.map((month) => <option key={month}>{month} 2026</option>)}</select></label></div>
          {view === "Overview" && <Overview metrics={metrics} actual={visibleActual} budget={visibleBudget} transactions={visibleTransactions} navigate={navigate} period={period} visibleMonths={visibleMonths} drillDown={drillDown} />}
@@ -212,7 +224,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
     {showInactivityPrompt && <div className={styles.backdrop}><section className={styles.modal} role="alertdialog" aria-modal="true" aria-labelledby="inactivity-title"><div className={styles.modalHead}><div><p className={styles.kicker}>Session timeout</p><h2 id="inactivity-title">Are you still there?</h2></div></div><p className={styles.subtitle}>You have been inactive for 3 minutes. Continue within 1 minute to keep your session open.</p><div className={styles.modalActions}><button className={styles.addButton} onClick={() => { setShowInactivityPrompt(false); resetInactivityRef.current(); }}>Continue session</button><button className={styles.cancel} onClick={logout}>Sign out</button></div></section></div>}
     {showForm && <div className={styles.backdrop} onClick={() => setShowForm(false)}><section className={styles.modal} onClick={(event) => event.stopPropagation()}><div className={styles.modalHead}><div><p className={styles.kicker}>Ledger entry</p><h2>{editingId === null ? "Add transaction" : "Edit transaction"}</h2></div><button onClick={() => setShowForm(false)} aria-label="Close">×</button></div><label>Description<input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="e.g. Office rent" /></label><label>Category<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label><div className={styles.formSplit}><label>Amount<input type="number" min="0" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="0.00" /></label><label>Type<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction["type"] })}><option>Expense</option><option>Income</option></select></label></div>
  <label>Month<select value={form.month} onChange={(event) => setForm({ ...form, month: event.target.value })}>{months.map((month) => <option key={month}>{month}</option>)}</select></label>
- <div className={styles.modalActions}><button className={styles.cancel} onClick={() => setShowForm(false)}>Cancel</button><button className={styles.addButton} onClick={addTransaction}>{editingId === null ? "Save transaction" : "Update transaction"}</button></div></section></div>}
+ {transactionError && <p className={styles.loginError} role="alert">{transactionError}</p>}<div className={styles.modalActions}><button className={styles.cancel} onClick={() => { setTransactionError(""); setShowForm(false); }}>Cancel</button><button className={styles.addButton} onClick={addTransaction}>{editingId === null ? "Save transaction" : "Update transaction"}</button></div></section></div>}
   </main>;
  }
 type SettingsUser = { id: number; username: string; is_admin: number };
