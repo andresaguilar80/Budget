@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
 
-type View = "Overview" | "Transactions" | "Budgets" | "Reports";
+type View = "Overview" | "Transactions" | "Budgets" | "Reports" | "Settings";
 type Transaction = { id: number; date: string; month: string; label: string; category: string; type: "Income" | "Expense"; amount: number; essential: boolean };
 type WorkspaceData = { name: string; initials: string; budget: number[]; actual: number[]; transactions: Transaction[] };
 type Recommendation = { month: string; budget: number; actual: number; text: string };
@@ -53,6 +53,46 @@ function getMonthlyExpenses(transactions: Transaction[]) {
 }
 
 export default function Home() {
+  const [status, setStatus] = useState<"checking" | "login" | "authenticated">("checking");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/budget/auth/me").then(async (response) => { if (!response.ok) { setStatus("login"); return; } const body = await response.json(); setIsAdmin(Boolean(body.user?.isAdmin)); setStatus("authenticated"); }).catch(() => setStatus("login"));
+  }, []);
+
+  const login = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    const response = await fetch("/api/budget/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      setError(body.error ?? "Unable to sign in.");
+      return;
+    }
+    const body = await response.json();
+    setIsAdmin(Boolean(body.user?.isAdmin));
+    setStatus("authenticated");
+  };
+
+  const logout = async () => {
+    await fetch("/api/budget/auth/logout", { method: "POST" });
+    setUsername("");
+    setPassword("");
+    setError("");
+    setIsAdmin(false);
+    setStatus("login");
+  };
+
+  if (status === "checking") return <main className={styles.loginPage}><div className={styles.loginCard}><p className={styles.kicker}>Budget System</p><h1>Loading your workspace...</h1></div></main>;
+  if (status === "login") return <main className={styles.loginPage}><form className={styles.loginCard} onSubmit={login}><div className={styles.loginBrand}><span className={styles.brandMark}>AI</span> AIBudget<span className={styles.brandDot}>.</span></div><p className={styles.kicker}>Budget System</p><h1>Sign in to your budget</h1><p className={styles.subtitle}>Access your financial workspaces and reports.</p><label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{error && <p className={styles.loginError}>{error}</p>}<button className={styles.addButton} type="submit">Sign in</button></form></main>;
+  return <BudgetHome logout={logout} isAdmin={isAdmin} />;
+}
+
+function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin: boolean }) {
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("Acme Creative");
   const workspace = workspaces[workspaceName];
   const [transactions, setTransactions] = useState(workspace.transactions);
@@ -60,8 +100,10 @@ export default function Home() {
   const [period, setPeriod] = useState("September 2026");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [categories, setCategories] = useState(["Operations", "People", "Facilities", "Marketing", "Discretionary", "Revenue"]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" as Transaction["type"] });
+  useEffect(() => { fetch("/api/budget/categories").then((response) => response.ok ? response.json() : null).then((data) => { if (data?.categories) setCategories(data.categories.map((category: { name: string }) => category.name)); }); }, []);
   const periodIndex = period === "Full year 2026" ? -1 : fullMonths.indexOf(period.replace(" 2026", ""));
   const baselineExpenses = getMonthlyExpenses(workspace.transactions);
   const currentExpenses = getMonthlyExpenses(transactions);
@@ -114,29 +156,69 @@ export default function Home() {
    const navigate = (nextView: View) => setView(nextView);
 
    return <main className={styles.shell}>
-     <aside className={styles.sidebar}>
-       <div className={styles.brand}><span className={styles.brandMark}>M</span> monarch<span className={styles.brandDot}>.</span></div>
-       <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span><b>{workspace.name}</b><small>Finance workspace</small></span><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Acme Creative</option><option>Zamora Creative</option></select></label>
+     <aside className={`${styles.sidebar} ${sidebarHidden ? styles.sidebarHidden : ""}`}>
+      <div className={styles.brand}><span className={styles.brandMark}>AI</span> AIBudget<span className={styles.brandDot}>.</span></div>
+      <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span className={styles.workspaceInfo}><b>Finance Workspace</b><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Acme Creative</option><option>Zamora Creative</option></select></span></label>
        <nav className={styles.nav} aria-label="Primary navigation">{(["Overview", "Transactions", "Budgets", "Reports"] as View[]).map((item) => <button key={item} className={view === item ? styles.activeNav : ""} onClick={() => navigate(item)}>{item === "Overview" ? "◒" : item === "Transactions" ? "↔" : item === "Budgets" ? "▥" : "◫"} &nbsp; {item}</button>)}</nav>
-       <div className={styles.sidebarBottom}><button>⚙ &nbsp; Settings</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>Admin</small></span><span>•••</span></div></div>
+      <div className={styles.sidebarBottom}>{isAdmin && <button onClick={() => navigate("Settings")}>⚙ &nbsp; Settings</button>}<button onClick={logout}>↪ &nbsp; Sign out</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>{isAdmin ? "Admin" : "Member"}</small></span><span>•••</span></div></div>
      </aside>
      <section className={styles.content}>
-       <header className={styles.topbar}><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
+      <header className={styles.topbar}><div className={styles.topbarStart}><button className={styles.sidebarToggle} onClick={() => setSidebarHidden((hidden) => !hidden)} aria-label={sidebarHidden ? "Show left panel" : "Hide left panel"} title={sidebarHidden ? "Show left panel" : "Hide left panel"}>{sidebarHidden ? "☰" : "←"}</button><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span></div><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
        <div className={styles.mainArea}>
          <div className={styles.intro}><div><p className={styles.kicker}>Financial control center</p><h1>{view === "Overview" ? "Good morning, Jordan." : view}</h1><p className={styles.subtitle}>{view === "Overview" ? `Here is what is happening in ${period.toLowerCase()}.` : `Review your ${view.toLowerCase()} for ${period.toLowerCase()}.`}</p></div><label className={styles.period}>Period<select value={period} onChange={(event) => setPeriod(event.target.value)}><option>Full year 2026</option>{fullMonths.map((month) => <option key={month}>{month} 2026</option>)}</select></label></div>
          {view === "Overview" && <Overview metrics={metrics} actual={visibleActual} budget={visibleBudget} transactions={visibleTransactions} navigate={navigate} period={period} visibleMonths={visibleMonths} drillDown={drillDown} />}
          {view === "Transactions" && <Transactions transactions={filteredTransactions} search={search} setSearch={setSearch} onEdit={editTransaction} />}
          {view === "Budgets" && <Budgets budget={visibleBudget} actual={visibleActual} visibleMonths={visibleMonths} />}
          {view === "Reports" && <Reports metrics={metrics} transactions={visibleTransactions} budget={visibleBudget} actual={visibleActual} visibleMonths={visibleMonths} />}
+         {view === "Settings" && <SettingsPanel />}
          <Recommendations recommendations={recommendations} />
          <footer className={styles.footer}><span>Demo data: January–December 2026</span><span className={styles.green}>● &nbsp;All systems operational</span><span>© 2026 Monarch Finance</span></footer>
        </div>
      </section>
-     {showForm && <div className={styles.backdrop} onClick={() => setShowForm(false)}><section className={styles.modal} onClick={(event) => event.stopPropagation()}><div className={styles.modalHead}><div><p className={styles.kicker}>Ledger entry</p><h2>{editingId === null ? "Add transaction" : "Edit transaction"}</h2></div><button onClick={() => setShowForm(false)} aria-label="Close">×</button></div><label>Description<input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="e.g. Office rent" /></label><label>Category<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>Operations</option><option>People</option><option>Facilities</option><option>Marketing</option><option>Discretionary</option><option>Revenue</option></select></label><div className={styles.formSplit}><label>Amount<input type="number" min="0" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="0.00" /></label><label>Type<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction["type"] })}><option>Expense</option><option>Income</option></select></label></div>
+    {showForm && <div className={styles.backdrop} onClick={() => setShowForm(false)}><section className={styles.modal} onClick={(event) => event.stopPropagation()}><div className={styles.modalHead}><div><p className={styles.kicker}>Ledger entry</p><h2>{editingId === null ? "Add transaction" : "Edit transaction"}</h2></div><button onClick={() => setShowForm(false)} aria-label="Close">×</button></div><label>Description<input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="e.g. Office rent" /></label><label>Category<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label><div className={styles.formSplit}><label>Amount<input type="number" min="0" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="0.00" /></label><label>Type<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction["type"] })}><option>Expense</option><option>Income</option></select></label></div>
  <label>Month<select value={form.month} onChange={(event) => setForm({ ...form, month: event.target.value })}>{months.map((month) => <option key={month}>{month}</option>)}</select></label>
  <div className={styles.modalActions}><button className={styles.cancel} onClick={() => setShowForm(false)}>Cancel</button><button className={styles.addButton} onClick={addTransaction}>{editingId === null ? "Save transaction" : "Update transaction"}</button></div></section></div>}
   </main>;
  }
+type SettingsUser = { id: number; username: string; is_admin: number };
+type SettingsCategory = { id: number; name: string };
+
+function SettingsPanel() {
+  const [users, setUsers] = useState<SettingsUser[]>([]);
+  const [categories, setCategories] = useState<SettingsCategory[]>([]);
+  const [userForm, setUserForm] = useState({ id: 0, username: "", password: "", isAdmin: false });
+  const [categoryForm, setCategoryForm] = useState({ id: 0, name: "" });
+  const [message, setMessage] = useState("");
+
+  const loadSettings = async () => {
+    const response = await fetch("/api/budget/settings");
+    if (!response.ok) { setMessage("Administrator access required."); return; }
+    const data = await response.json();
+    setUsers(data.users);
+    setCategories(data.categories);
+  };
+  useEffect(() => { loadSettings(); }, []);
+
+  const saveUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const method = userForm.id ? "PATCH" : "POST";
+    const response = await fetch("/api/budget/settings", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: "user", ...userForm, isAdmin: userForm.isAdmin }) });
+    const data = await response.json();
+    if (!response.ok) { setMessage(data.error); return; }
+    setUsers(data.users); setUserForm({ id: 0, username: "", password: "", isAdmin: false }); setMessage("User saved.");
+  };
+  const saveCategory = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const method = categoryForm.id ? "PATCH" : "POST";
+    const response = await fetch("/api/budget/settings", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resource: "category", ...categoryForm }) });
+    const data = await response.json();
+    if (!response.ok) { setMessage(data.error); return; }
+    setCategories(data.categories); setCategoryForm({ id: 0, name: "" }); setMessage("Category saved.");
+  };
+
+  return <div className={styles.settingsGrid}><div className={styles.settingsHeader}><div><p className={styles.kicker}>Administration</p><h2>Settings</h2><p>Manage budget users, admin access, and spending categories.</p></div>{message && <span className={styles.settingsMessage}>{message}</span>}</div><article className={styles.panel}><div className={styles.panelHead}><div><h2>{userForm.id ? "Edit user" : "Add user"}</h2><p>Admins can create other administrators and reset passwords.</p></div></div><form className={styles.settingsForm} onSubmit={saveUser}><input type="hidden" value={userForm.id} /><label>Username<input value={userForm.username} onChange={(event) => setUserForm({ ...userForm, username: event.target.value })} required /></label><label>Password{userForm.id ? " (leave blank to keep current)" : ""}<input type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} required={!userForm.id} /></label><label className={styles.checkboxLabel}><input type="checkbox" checked={userForm.isAdmin} onChange={(event) => setUserForm({ ...userForm, isAdmin: event.target.checked })} /> Administrator</label><div><button className={styles.addButton} type="submit">{userForm.id ? "Update user" : "Add user"}</button>{userForm.id > 0 && <button className={styles.cancel} type="button" onClick={() => setUserForm({ id: 0, username: "", password: "", isAdmin: false })}>Cancel</button>}</div></form><div className={styles.settingsList}>{users.map((user) => <div className={styles.settingsRow} key={user.id}><span><b>{user.username}</b><small>{user.is_admin ? "Administrator" : "Member"}</small></span><button className={styles.textButton} onClick={() => setUserForm({ id: user.id, username: user.username, password: "", isAdmin: Boolean(user.is_admin) })}>Edit</button></div>)}</div></article><article className={styles.panel}><div className={styles.panelHead}><div><h2>{categoryForm.id ? "Edit category" : "Add category"}</h2><p>Categories are available for budget transaction classification.</p></div></div><form className={styles.settingsForm} onSubmit={saveCategory}><label>Category name<input value={categoryForm.name} onChange={(event) => setCategoryForm({ ...categoryForm, name: event.target.value })} required /></label><div><button className={styles.addButton} type="submit">{categoryForm.id ? "Update category" : "Add category"}</button>{categoryForm.id > 0 && <button className={styles.cancel} type="button" onClick={() => setCategoryForm({ id: 0, name: "" })}>Cancel</button>}</div></form><div className={styles.settingsList}>{categories.map((category) => <div className={styles.settingsRow} key={category.id}><b>{category.name}</b><button className={styles.textButton} onClick={() => setCategoryForm(category)}>Edit</button></div>)}</div></article></div>;
+}
+
 function Overview({ metrics, actual, budget, transactions, navigate, period, visibleMonths, drillDown }: { metrics: { revenue: number; expenses: number; netIncome: number; budget: number; execution: number }; actual: number[]; budget: number[]; transactions: Transaction[]; navigate: (view: View) => void; period: string; visibleMonths: string[]; drillDown: (target: string) => void }) {
   const openDrillDown = (event: React.MouseEvent, target: string) => { event.preventDefault(); drillDown(target); };
   return <><div className={styles.kpis}><article onClick={(event) => openDrillDown(event, "revenue")} title="Click to view revenue transactions"><label>Total revenue <span>↗</span></label><strong>{money.format(metrics.revenue)}</strong><small className={styles.green}>+12.8% <em>vs prior year</em></small></article><article onClick={(event) => openDrillDown(event, "expenses")} title="Click to view expense transactions"><label>Total expenses <span>↘</span></label><strong>{money.format(metrics.expenses)}</strong><small className={styles.red}>+4.2% <em>vs prior year</em></small></article><article className={styles.darkCard} onClick={(event) => openDrillDown(event, "netIncome")} title="Click to open Net income report"><label>Net income <span>◈</span></label><strong>{money.format(metrics.netIncome)}</strong><small className={styles.lightGreen}>+18.6% <em>annual margin</em></small></article><article onClick={(event) => openDrillDown(event, "budget")} title="Click to view budget details"><label>Budget remaining <span>◎</span></label><strong>{money.format(metrics.budget - metrics.expenses)}</strong><div className={styles.progress}><span style={{ width: `${metrics.execution}%` }} /></div><small>{metrics.execution}% executed <em>of {money.format(metrics.budget)}</em></small></article></div><div className={styles.twoCol}><article className={styles.panel}><div className={styles.panelHead}><div><h2>Cash flow overview</h2><p>Budget vs actual spend across 2026</p></div><div className={styles.legend}><span><i className={styles.budgetDot} /> Budget</span><span><i className={styles.actualDot} /> Actual</span></div></div><div className={styles.chart}><div className={styles.axis}><span>$40k</span><span>$30k</span><span>$20k</span><span>$10k</span><span>$0</span></div><div className={styles.chartBody}><div className={styles.lines}><i /><i /><i /><i /><i /></div><div className={styles.bars}>{visibleMonths.map((month, index) => <div className={styles.barGroup} key={month}><div className={styles.barPair}><span className={styles.budgetBar} style={{ height: `${budget[index] / 400}%` }} title={`${month} budget: ${money.format(budget[index])}`} aria-label={`${month} budget: ${money.format(budget[index])}`} /><span className={styles.actualBar} style={{ height: `${actual[index] / 400}%` }} title={`${month} actual: ${money.format(actual[index])}`} aria-label={`${month} actual: ${money.format(actual[index])}`} /></div><small>{month}</small></div>)}</div></div></div><div className={styles.chartFooter}><b>{money.format(actual.reduce((sum, item) => sum + item, 0))}</b> annual actual spend <strong>Target {money.format(budget.reduce((sum, item) => sum + item, 0))}</strong></div></article><article className={styles.panel}><div className={styles.panelHead}><div><h2>Spend by category</h2><p>{period} allocation</p></div></div><div className={styles.donutArea}><div className={styles.donut} onClick={(event) => openDrillDown(event, "expense")} title="Click to view all expense transactions"><span><b>100%</b><small>of spend</small></span></div><div className={styles.categoryList}><span onClick={(event) => openDrillDown(event, "People")} title="Click to view People transactions"><i className={styles.dotGreen} /> People <b>42%</b></span><span onClick={(event) => openDrillDown(event, "Facilities")} title="Click to view Facilities transactions"><i className={styles.dotYellow} /> Facilities <b>27%</b></span><span onClick={(event) => openDrillDown(event, "Operations")} title="Click to view Operations transactions"><i className={styles.dotBlue} /> Operations <b>20%</b></span><span onClick={(event) => openDrillDown(event, "Discretionary")} title="Click to view Discretionary transactions"><i className={styles.dotLilac} /> Discretionary <b>11%</b></span></div></div></article></div><div className={styles.twoCol}><article className={styles.panel}><div className={styles.panelHead}><div><h2>Budget variance</h2><p>Annual cost center performance</p></div><button className={styles.textButton} onClick={() => navigate("Budgets")}>View budgets →</button></div><VarianceRows /></article><article className={styles.panel}><div className={styles.panelHead}><div><h2>Recent activity</h2><p>Latest of {transactions.length} transactions</p></div><button className={styles.textButton} onClick={() => navigate("Transactions")}>See all →</button></div><Activity transactions={transactions.slice(-4).reverse()} /></article></div></>;
