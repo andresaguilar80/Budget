@@ -227,7 +227,13 @@ export function initializeBudgetDatabase() {
   for (const user of budgetUsers) insertBudgetUser.run(user.username, hashPassword(user.password), new Date().toISOString());
   budgetDb.prepare("UPDATE budget_users SET is_admin = 1 WHERE username IN ('andres', 'andresaguilar80')").run();
   const insertCategory = budgetDb.prepare("INSERT OR IGNORE INTO budget_categories (name, created_at) VALUES (?, ?)");
-  for (const category of ["People", "Facilities", "Operations", "Marketing", "Discretionary", "Revenue"]) insertCategory.run(category, new Date().toISOString());
+  for (const category of [
+    "People", "Facilities", "Operations", "Marketing", "Discretionary", "Revenue",
+    "Administrative & Errands", "Clothing", "Communications & Technology", "Education & Studies",
+    "Entertainment & Recreation", "Financial Obligations", "Food & Dining", "Gifts & Celebrations",
+    "Health", "Housing & Home", "Office Supplies & Stationery", "Personal Care",
+    "Raffles & Donations", "Transportation", "Travel & Vacations", "Vehicle",
+  ]) insertCategory.run(category, new Date().toISOString());
   budgetInitialized = true;
 }
 

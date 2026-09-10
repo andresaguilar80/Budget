@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
+import importedTransactions from "../data/budget-transactions.json";
 
 type View = "Overview" | "Transactions" | "Budgets" | "Reports" | "Settings";
-type Transaction = { id: number; date: string; month: string; label: string; category: string; type: "Income" | "Expense"; amount: number; essential: boolean };
+type Transaction = { id: number; date: string; month: string; label: string; details?: string; category: string; type: "Income" | "Expense"; amount: number; essential: boolean; paymentChannel?: string };
 type WorkspaceData = { name: string; initials: string; budget: number[]; actual: number[]; transactions: Transaction[] };
 type Recommendation = { month: string; budget: number; actual: number; text: string };
 
@@ -15,6 +16,7 @@ const acmeActual = [19800, 22700, 24100, 23200, 26800, 27400, 29300, 28600, 3043
 const zamoraBudget = [15000, 16200, 16800, 17400, 18200, 19000, 19800, 20500, 21400, 22200, 23000, 24000];
 const zamoraActual = [14200, 17500, 18100, 16900, 19600, 21800, 19100, 22600, 20700, 24500, 23800, 26200];
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const personalTransactions: Transaction[] = importedTransactions.map((item) => ({ ...item, type: item.type as Transaction["type"] }));
 
 function createYearData(workspace: "Acme Creative" | "Zamora Creative"): Transaction[] {
   const rows: Transaction[] = [];
@@ -33,6 +35,7 @@ function createYearData(workspace: "Acme Creative" | "Zamora Creative"): Transac
 }
 
 const workspaces: Record<string, WorkspaceData> = {
+  "Personal Budget": { name: "Personal Budget", initials: "PB", budget: getMonthlyExpenses(personalTransactions).map((amount) => Math.ceil(amount * 1.1)), actual: getMonthlyExpenses(personalTransactions), transactions: personalTransactions },
   "Acme Creative": { name: "Acme Creative", initials: "AC", budget: acmeBudget, actual: acmeActual, transactions: createYearData("Acme Creative") },
   "Zamora Creative": { name: "Zamora Creative", initials: "ZC", budget: zamoraBudget, actual: zamoraActual, transactions: createYearData("Zamora Creative") },
 };
@@ -99,7 +102,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
   const logoutRef = useRef(logout);
   const promptRef = useRef(false);
   const resetInactivityRef = useRef<() => void>(() => undefined);
-  const [workspaceName, setWorkspaceName] = useState("Acme Creative");
+  const [workspaceName, setWorkspaceName] = useState("Personal Budget");
   const workspace = workspaces[workspaceName];
   const [transactions, setTransactions] = useState(workspace.transactions);
   const [view, setView] = useState<View>("Overview");
@@ -184,7 +187,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
   return <main className={styles.shell}>
      <aside className={`${styles.sidebar} ${sidebarHidden ? styles.sidebarHidden : ""}`}>
       <div className={styles.brand}><span className={styles.brandMark}>AI</span> AIBudget<span className={styles.brandDot}>.</span></div>
-      <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span className={styles.workspaceInfo}><b>Finance Workspace</b><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Acme Creative</option><option>Zamora Creative</option></select></span></label>
+      <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span className={styles.workspaceInfo}><b>Finance Workspace</b><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Personal Budget</option><option>Acme Creative</option><option>Zamora Creative</option></select></span></label>
        <nav className={styles.nav} aria-label="Primary navigation">{(["Overview", "Transactions", "Budgets", "Reports"] as View[]).map((item) => <button key={item} className={view === item ? styles.activeNav : ""} onClick={() => navigate(item)}>{item === "Overview" ? "◒" : item === "Transactions" ? "↔" : item === "Budgets" ? "▥" : "◫"} &nbsp; {item}</button>)}</nav>
       <div className={styles.sidebarBottom}>{isAdmin && <button onClick={() => navigate("Settings")}>⚙ &nbsp; Settings</button>}<button onClick={logout}>↪ &nbsp; Sign out</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>{isAdmin ? "Admin" : "Member"}</small></span><span>•••</span></div></div>
      </aside>
