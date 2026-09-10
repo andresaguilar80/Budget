@@ -3,7 +3,7 @@ import path from "node:path";
 
 import Database from "better-sqlite3";
 
-import { hashPassword } from "./auth";
+import { hashPassword, hashSessionToken } from "./auth";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "vacation.db");
@@ -131,14 +131,14 @@ export function initializeDatabase() {
   }
 
   const budgetUsers = [
-    ["andresaguilar80", "12345678"],
-    ["andres", "zamora"],
-  ] as const;
+    { username: "andresaguilar80", password: process.env.BUDGET_ADMIN_PASSWORD },
+    { username: "andres", password: process.env.BUDGET_SECOND_ADMIN_PASSWORD },
+  ].filter((user): user is { username: string; password: string } => Boolean(user.password));
   const insertBudgetUser = db.prepare(
     "INSERT OR IGNORE INTO budget_users (username, password_hash, created_at) VALUES (?, ?, ?)",
   );
-  for (const [username, password] of budgetUsers) {
-    insertBudgetUser.run(username, hashPassword(password), new Date().toISOString());
+  for (const user of budgetUsers) {
+    insertBudgetUser.run(user.username, hashPassword(user.password), new Date().toISOString());
   }
   db.prepare("UPDATE budget_users SET is_admin = 1 WHERE username IN ('andres', 'andresaguilar80')").run();
   const insertCategory = db.prepare("INSERT OR IGNORE INTO budget_categories (name, created_at) VALUES (?, ?)");
@@ -231,7 +231,7 @@ export function getBudgetUserByUsername(username: string) {
 
 export function createBudgetSession(userId: number, token: string, expiresAt: string) {
   db.prepare("DELETE FROM budget_sessions WHERE expires_at <= ?").run(new Date().toISOString());
-  db.prepare("INSERT INTO budget_sessions (token, user_id, expires_at) VALUES (?, ?, ?)").run(token, userId, expiresAt);
+  db.prepare("INSERT INTO budget_sessions (token, user_id, expires_at) VALUES (?, ?, ?)").run(hashSessionToken(token), userId, expiresAt);
 }
 
 export function getBudgetUserBySession(token: string) {
@@ -239,15 +239,19 @@ export function getBudgetUserBySession(token: string) {
     .prepare(
       "SELECT u.id, u.username, u.password_hash, u.is_admin FROM budget_users u JOIN budget_sessions s ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > ?",
     )
-    .get(token, new Date().toISOString()) as BudgetUserRecord | undefined;
+    .get(hashSessionToken(token), new Date().toISOString()) as BudgetUserRecord | undefined;
 }
 
 export function deleteBudgetSession(token: string) {
-  db.prepare("DELETE FROM budget_sessions WHERE token = ?").run(token);
+  db.prepare("DELETE FROM budget_sessions WHERE token = ?").run(hashSessionToken(token));
 }
 
 export function listBudgetUsers() {
   return db.prepare("SELECT id, username, is_admin, created_at FROM budget_users ORDER BY username").all() as Array<{ id: number; username: string; is_admin: number; created_at: string }>;
+}
+
+export function countBudgetAdmins() {
+  return (db.prepare("SELECT COUNT(*) AS count FROM budget_users WHERE is_admin = 1").get() as { count: number }).count;
 }
 
 export function createBudgetUser(username: string, password: string, isAdmin: boolean) {

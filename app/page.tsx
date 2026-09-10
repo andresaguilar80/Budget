@@ -111,7 +111,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
   const currentExpenses = getMonthlyExpenses(transactions);
   const currentActual = workspace.actual.map((amount, index) => amount + currentExpenses[index] - baselineExpenses[index]);
   const visibleMonths = periodIndex === -1 ? months : [months[periodIndex]];
-   const visibleBudget = periodIndex === -1 ? workspace.budget : [workspace.budget[periodIndex]];
+  const visibleBudget = useMemo(() => periodIndex === -1 ? workspace.budget : [workspace.budget[periodIndex]], [periodIndex, workspace.budget]);
   const visibleActual = periodIndex === -1 ? currentActual : [currentActual[periodIndex]];
    const visibleTransactions = periodIndex === -1 ? transactions : transactions.filter((item) => item.month === months[periodIndex]);
    const metrics = useMemo(() => {
@@ -192,14 +192,7 @@ function SettingsPanel() {
   const [categoryForm, setCategoryForm] = useState({ id: 0, name: "" });
   const [message, setMessage] = useState("");
 
-  const loadSettings = async () => {
-    const response = await fetch("/api/budget/settings");
-    if (!response.ok) { setMessage("Administrator access required."); return; }
-    const data = await response.json();
-    setUsers(data.users);
-    setCategories(data.categories);
-  };
-  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => { fetch("/api/budget/settings").then(async (response) => { if (!response.ok) { setMessage("Administrator access required."); return; } const data = await response.json(); setUsers(data.users); setCategories(data.categories); }).catch(() => setMessage("Unable to load settings.")); }, []);
 
   const saveUser = async (event: React.FormEvent) => {
     event.preventDefault();

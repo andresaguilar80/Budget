@@ -22,8 +22,11 @@ export function verifyPassword(password: string, storedHash: string): boolean {
     .pbkdf2Sync(password, salt, ITERATIONS, KEY_LENGTH, "sha512")
     .toString("hex");
 
-  return crypto.timingSafeEqual(
-    Buffer.from(hash, "hex"),
-    Buffer.from(comparisonHash, "hex"),
-  );
+  const storedBuffer = Buffer.from(hash, "hex");
+  const comparisonBuffer = Buffer.from(comparisonHash, "hex");
+  return storedBuffer.length === comparisonBuffer.length && crypto.timingSafeEqual(storedBuffer, comparisonBuffer);
+}
+
+export function hashSessionToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }
