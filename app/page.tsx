@@ -132,7 +132,12 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
     scheduleInactivity();
     return () => { clearTimers(); events.forEach((event) => window.removeEventListener(event, handleActivity)); };
   }, []);
-  useEffect(() => { fetch("/api/budget/categories").then((response) => response.ok ? response.json() : null).then((data) => { if (data?.categories) setCategories(data.categories.map((category: { name: string }) => category.name)); }); }, []);
+  const refreshCategories = async () => {
+    const response = await fetch("/api/budget/categories");
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.categories) setCategories(data.categories.map((category: { name: string }) => category.name));
+  };
   const periodIndex = period === "Full year 2026" ? -1 : fullMonths.indexOf(period.replace(" 2026", ""));
   const baselineExpenses = getMonthlyExpenses(workspace.transactions);
   const currentExpenses = getMonthlyExpenses(transactions);
@@ -192,7 +197,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
       <div className={styles.sidebarBottom}>{isAdmin && <button onClick={() => navigate("Settings")}>⚙ &nbsp; Settings</button>}<button onClick={logout}>↪ &nbsp; Sign out</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>{isAdmin ? "Admin" : "Member"}</small></span><span>•••</span></div></div>
      </aside>
      <section className={styles.content}>
-      <header className={styles.topbar}><div className={styles.topbarStart}><button className={styles.sidebarToggle} onClick={() => setSidebarHidden((hidden) => !hidden)} aria-label={sidebarHidden ? "Show left panel" : "Hide left panel"} title={sidebarHidden ? "Show left panel" : "Hide left panel"}>{sidebarHidden ? "☰" : "←"}</button><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span></div><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
+      <header className={styles.topbar}><div className={styles.topbarStart}><button className={styles.sidebarToggle} onClick={() => setSidebarHidden((hidden) => !hidden)} aria-label={sidebarHidden ? "Show left panel" : "Hide left panel"} title={sidebarHidden ? "Show left panel" : "Hide left panel"}>{sidebarHidden ? "☰" : "←"}</button><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span></div><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => { refreshCategories().catch(() => undefined); setEditingId(null); setForm({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" }); setShowForm(true); }}>+ Add transaction</button></div></header>
        <div className={styles.mainArea}>
          <div className={styles.intro}><div><p className={styles.kicker}>Financial control center</p><h1>{view === "Overview" ? "Good morning, Jordan." : view}</h1><p className={styles.subtitle}>{view === "Overview" ? `Here is what is happening in ${period.toLowerCase()}.` : `Review your ${view.toLowerCase()} for ${period.toLowerCase()}.`}</p></div><label className={styles.period}>Period<select value={period} onChange={(event) => setPeriod(event.target.value)}><option>Full year 2026</option>{fullMonths.map((month) => <option key={month}>{month} 2026</option>)}</select></label></div>
          {view === "Overview" && <Overview metrics={metrics} actual={visibleActual} budget={visibleBudget} transactions={visibleTransactions} navigate={navigate} period={period} visibleMonths={visibleMonths} drillDown={drillDown} />}
