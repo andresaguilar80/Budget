@@ -26,7 +26,10 @@ function validName(value: string | undefined, maxLength: number) {
 
 function isSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
+  if (!origin) return true;
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() ?? new URL(request.url).protocol.replace(":", "");
+  return Boolean(host) && origin === `${protocol}://${host}`;
 }
 
 export async function GET() {
