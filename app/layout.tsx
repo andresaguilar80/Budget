@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vacation Request System",
+  title: "Budget System",
   description: "MVP vacation request workflow for employees and managers",
 };
 
