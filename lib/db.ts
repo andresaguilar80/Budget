@@ -6,12 +6,15 @@ import Database from "better-sqlite3";
 import { hashPassword, hashSessionToken } from "./auth";
 
 const dataDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "vacation.db");
+const vacationDbPath = path.join(dataDir, "vacation.db");
+const budgetDbPath = path.join(dataDir, "budget.db");
 
 fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(dbPath);
+const db = new Database(vacationDbPath);
+const budgetDb = new Database(budgetDbPath);
 db.pragma("journal_mode = WAL");
+budgetDb.pragma("journal_mode = WAL");
 
 type AccessTypeRow = {
   id: number;
@@ -103,48 +106,7 @@ export function initializeDatabase() {
       FOREIGN KEY(recipient_id) REFERENCES employees(id)
     );
 
-    CREATE TABLE IF NOT EXISTS budget_users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      is_admin INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS budget_sessions (
-      token TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      expires_at TEXT NOT NULL,
-      FOREIGN KEY(user_id) REFERENCES budget_users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS budget_categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL
-    );
   `);
-
-  const budgetUserColumns = db.pragma("table_info(budget_users)") as Array<{ name: string }>;
-  if (!budgetUserColumns.some((column) => column.name === "is_admin")) {
-    db.exec("ALTER TABLE budget_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
-  }
-
-  const budgetUsers = [
-    { username: "andresaguilar80", password: process.env.BUDGET_ADMIN_PASSWORD },
-    { username: "andres", password: process.env.BUDGET_SECOND_ADMIN_PASSWORD },
-  ].filter((user): user is { username: string; password: string } => Boolean(user.password));
-  const insertBudgetUser = db.prepare(
-    "INSERT OR IGNORE INTO budget_users (username, password_hash, created_at) VALUES (?, ?, ?)",
-  );
-  for (const user of budgetUsers) {
-    insertBudgetUser.run(user.username, hashPassword(user.password), new Date().toISOString());
-  }
-  db.prepare("UPDATE budget_users SET is_admin = 1 WHERE username IN ('andres', 'andresaguilar80')").run();
-  const insertCategory = db.prepare("INSERT OR IGNORE INTO budget_categories (name, created_at) VALUES (?, ?)");
-  for (const category of ["People", "Facilities", "Operations", "Marketing", "Discretionary", "Revenue"]) {
-    insertCategory.run(category, new Date().toISOString());
-  }
 
   const accessTypes = db
     .prepare("SELECT id, name, description FROM access_types")
@@ -221,21 +183,76 @@ export function getEmployeeByEmail(email: string) {
     .get(email) as EmployeeRecord | undefined;
 }
 
+let budgetInitialized = false;
+
+export function initializeBudgetDatabase() {
+  if (budgetInitialized) return;
+  budgetDb.exec(`
+    CREATE TABLE IF NOT EXISTS budget_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS budget_sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES budget_users(id)
+    );
+    CREATE TABLE IF NOT EXISTS budget_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  const legacyBudgetTables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('budget_users', 'budget_categories')").all() as Array<{ name: string }>;
+  if (legacyBudgetTables.length > 0) {
+    const legacyUsers = db.prepare("SELECT username, password_hash, is_admin, created_at FROM budget_users").all() as Array<{ username: string; password_hash: string; is_admin: number; created_at: string }>;
+    const copyUser = budgetDb.prepare("INSERT OR IGNORE INTO budget_users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)");
+    for (const user of legacyUsers) copyUser.run(user.username, user.password_hash, user.is_admin, user.created_at);
+    const legacyCategories = db.prepare("SELECT name, created_at FROM budget_categories").all() as Array<{ name: string; created_at: string }>;
+    const copyCategory = budgetDb.prepare("INSERT OR IGNORE INTO budget_categories (name, created_at) VALUES (?, ?)");
+    for (const category of legacyCategories) copyCategory.run(category.name, category.created_at);
+    db.exec("DROP TABLE IF EXISTS budget_sessions; DROP TABLE IF EXISTS budget_users; DROP TABLE IF EXISTS budget_categories;");
+  }
+
+  const budgetUsers = [
+    { username: "andresaguilar80", password: process.env.BUDGET_ADMIN_PASSWORD },
+    { username: "andres", password: process.env.BUDGET_SECOND_ADMIN_PASSWORD },
+  ].filter((user): user is { username: string; password: string } => Boolean(user.password));
+  const insertBudgetUser = budgetDb.prepare("INSERT OR IGNORE INTO budget_users (username, password_hash, created_at) VALUES (?, ?, ?)");
+  for (const user of budgetUsers) insertBudgetUser.run(user.username, hashPassword(user.password), new Date().toISOString());
+  budgetDb.prepare("UPDATE budget_users SET is_admin = 1 WHERE username IN ('andres', 'andresaguilar80')").run();
+  const insertCategory = budgetDb.prepare("INSERT OR IGNORE INTO budget_categories (name, created_at) VALUES (?, ?)");
+  for (const category of ["People", "Facilities", "Operations", "Marketing", "Discretionary", "Revenue"]) insertCategory.run(category, new Date().toISOString());
+  budgetInitialized = true;
+}
+
+export function ensureBudgetSeedData() {
+  initializeBudgetDatabase();
+}
+
 export type BudgetUserRecord = { id: number; username: string; password_hash: string; is_admin: number };
 
 export function getBudgetUserByUsername(username: string) {
-  return db
+  initializeBudgetDatabase();
+  return budgetDb
     .prepare("SELECT id, username, password_hash, is_admin FROM budget_users WHERE username = ?")
     .get(username) as BudgetUserRecord | undefined;
 }
 
 export function createBudgetSession(userId: number, token: string, expiresAt: string) {
-  db.prepare("DELETE FROM budget_sessions WHERE expires_at <= ?").run(new Date().toISOString());
-  db.prepare("INSERT INTO budget_sessions (token, user_id, expires_at) VALUES (?, ?, ?)").run(hashSessionToken(token), userId, expiresAt);
+  initializeBudgetDatabase();
+  budgetDb.prepare("DELETE FROM budget_sessions WHERE expires_at <= ?").run(new Date().toISOString());
+  budgetDb.prepare("INSERT INTO budget_sessions (token, user_id, expires_at) VALUES (?, ?, ?)").run(hashSessionToken(token), userId, expiresAt);
 }
 
 export function getBudgetUserBySession(token: string) {
-  return db
+  initializeBudgetDatabase();
+  return budgetDb
     .prepare(
       "SELECT u.id, u.username, u.password_hash, u.is_admin FROM budget_users u JOIN budget_sessions s ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > ?",
     )
@@ -243,41 +260,48 @@ export function getBudgetUserBySession(token: string) {
 }
 
 export function deleteBudgetSession(token: string) {
-  db.prepare("DELETE FROM budget_sessions WHERE token = ?").run(hashSessionToken(token));
+  initializeBudgetDatabase();
+  budgetDb.prepare("DELETE FROM budget_sessions WHERE token = ?").run(hashSessionToken(token));
 }
 
 export function listBudgetUsers() {
-  return db.prepare("SELECT id, username, is_admin, created_at FROM budget_users ORDER BY username").all() as Array<{ id: number; username: string; is_admin: number; created_at: string }>;
+  initializeBudgetDatabase();
+  return budgetDb.prepare("SELECT id, username, is_admin, created_at FROM budget_users ORDER BY username").all() as Array<{ id: number; username: string; is_admin: number; created_at: string }>;
 }
 
 export function countBudgetAdmins() {
-  return (db.prepare("SELECT COUNT(*) AS count FROM budget_users WHERE is_admin = 1").get() as { count: number }).count;
+  initializeBudgetDatabase();
+  return (budgetDb.prepare("SELECT COUNT(*) AS count FROM budget_users WHERE is_admin = 1").get() as { count: number }).count;
 }
 
 export function createBudgetUser(username: string, password: string, isAdmin: boolean) {
-  const result = db.prepare("INSERT INTO budget_users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)").run(username, hashPassword(password), isAdmin ? 1 : 0, new Date().toISOString());
+  initializeBudgetDatabase();
+  const result = budgetDb.prepare("INSERT INTO budget_users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)").run(username, hashPassword(password), isAdmin ? 1 : 0, new Date().toISOString());
   return Number(result.lastInsertRowid);
 }
 
 export function updateBudgetUser(id: number, input: { username: string; password?: string; isAdmin: boolean }) {
   if (input.password) {
-    db.prepare("UPDATE budget_users SET username = ?, password_hash = ?, is_admin = ? WHERE id = ?").run(input.username, hashPassword(input.password), input.isAdmin ? 1 : 0, id);
+    budgetDb.prepare("UPDATE budget_users SET username = ?, password_hash = ?, is_admin = ? WHERE id = ?").run(input.username, hashPassword(input.password), input.isAdmin ? 1 : 0, id);
   } else {
-    db.prepare("UPDATE budget_users SET username = ?, is_admin = ? WHERE id = ?").run(input.username, input.isAdmin ? 1 : 0, id);
+    budgetDb.prepare("UPDATE budget_users SET username = ?, is_admin = ? WHERE id = ?").run(input.username, input.isAdmin ? 1 : 0, id);
   }
 }
 
 export function listBudgetCategories() {
-  return db.prepare("SELECT id, name, created_at FROM budget_categories ORDER BY name").all() as Array<{ id: number; name: string; created_at: string }>;
+  initializeBudgetDatabase();
+  return budgetDb.prepare("SELECT id, name, created_at FROM budget_categories ORDER BY name").all() as Array<{ id: number; name: string; created_at: string }>;
 }
 
 export function createBudgetCategory(name: string) {
-  const result = db.prepare("INSERT INTO budget_categories (name, created_at) VALUES (?, ?)").run(name, new Date().toISOString());
+  initializeBudgetDatabase();
+  const result = budgetDb.prepare("INSERT INTO budget_categories (name, created_at) VALUES (?, ?)").run(name, new Date().toISOString());
   return Number(result.lastInsertRowid);
 }
 
 export function updateBudgetCategory(id: number, name: string) {
-  db.prepare("UPDATE budget_categories SET name = ? WHERE id = ?").run(name, id);
+  initializeBudgetDatabase();
+  budgetDb.prepare("UPDATE budget_categories SET name = ? WHERE id = ?").run(name, id);
 }
 
 export function getEmployeeById(id: number) {

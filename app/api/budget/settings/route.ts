@@ -5,7 +5,7 @@ import {
   createBudgetCategory,
   createBudgetUser,
   countBudgetAdmins,
-  ensureSeedData,
+  ensureBudgetSeedData,
   getBudgetUserBySession,
   listBudgetCategories,
   listBudgetUsers,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/db";
 
 async function getAdmin() {
-  ensureSeedData();
+  ensureBudgetSeedData();
   const token = (await cookies()).get("budget_session")?.value;
   const user = token ? getBudgetUserBySession(token) : undefined;
   return user?.is_admin ? user : undefined;

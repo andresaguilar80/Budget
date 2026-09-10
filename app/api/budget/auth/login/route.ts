@@ -3,12 +3,12 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
-import { createBudgetSession, ensureSeedData, getBudgetUserByUsername } from "@/lib/db";
+import { createBudgetSession, ensureBudgetSeedData, getBudgetUserByUsername } from "@/lib/db";
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
 
 export async function POST(request: Request) {
-  ensureSeedData();
+  ensureBudgetSeedData();
   const body = (await request.json()) as { username?: string; password?: string };
   const username = body.username?.trim().toLowerCase();
   const password = body.password ?? "";
