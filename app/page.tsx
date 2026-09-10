@@ -1,487 +1,131 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-
-import {
-  type VacationRequest,
-  validateVacationDates,
-} from "@/lib/vacation";
+import { useMemo, useState } from "react";
 import styles from "./page.module.css";
 
-const defaultForm = {
-  employeeId: "1",
-  startDate: "",
-  endDate: "",
-  reason: "",
+type View = "Overview" | "Transactions" | "Budgets" | "Reports";
+type Transaction = { id: number; date: string; month: string; label: string; category: string; type: "Income" | "Expense"; amount: number; essential: boolean };
+type WorkspaceData = { name: string; initials: string; budget: number[]; actual: number[]; transactions: Transaction[] };
+type Recommendation = { month: string; budget: number; actual: number; text: string };
+
+const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const fullMonths = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const acmeBudget = [22000, 24500, 23800, 26400, 27800, 29500, 30200, 31000, 32000, 33500, 34800, 36000];
+const acmeActual = [19800, 22700, 24100, 23200, 26800, 27400, 29300, 28600, 30430, 31800, 33700, 35200];
+const zamoraBudget = [15000, 16200, 16800, 17400, 18200, 19000, 19800, 20500, 21400, 22200, 23000, 24000];
+const zamoraActual = [14200, 17500, 18100, 16900, 19600, 21800, 19100, 22600, 20700, 24500, 23800, 26200];
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+function createYearData(workspace: "Acme Creative" | "Zamora Creative"): Transaction[] {
+  const rows: Transaction[] = [];
+  months.forEach((month, index) => {
+    const monthNumber = String(index + 1).padStart(2, "0");
+    const add = (day: number, label: string, category: string, type: Transaction["type"], amount: number, essential: boolean) => rows.push({ id: index * 10 + rows.length + 1, date: `2026-${monthNumber}-${String(day).padStart(2, "0")}`, month, label, category, type, amount, essential });
+    const multiplier = workspace === "Zamora Creative" ? 0.72 : 1;
+    add(2, workspace === "Zamora Creative" ? "Brand retainers" : "Enterprise retainers", "Revenue", "Income", (43000 + index * 1250) * multiplier, true);
+    add(4, "Team payroll", "People", "Expense", (14200 + (index % 3) * 300) * multiplier, true);
+    add(8, "Cloud infrastructure", "Facilities", "Expense", (3500 + index * 70) * multiplier, true);
+    add(12, "Software subscriptions", "Operations", "Expense", (1450 + (index % 4) * 60) * multiplier, true);
+    add(17, index % 2 === 0 ? "Growth campaign" : "Client event", "Marketing", "Expense", (1800 + (index % 5) * 250) * multiplier, false);
+    add(24, index % 3 === 0 ? "Travel and meals" : "Advisory services", index % 3 === 0 ? "Discretionary" : "Operations", "Expense", (1150 + (index % 4) * 180) * multiplier, index % 3 !== 0);
+  });
+  return rows;
+}
+
+const workspaces: Record<string, WorkspaceData> = {
+  "Acme Creative": { name: "Acme Creative", initials: "AC", budget: acmeBudget, actual: acmeActual, transactions: createYearData("Acme Creative") },
+  "Zamora Creative": { name: "Zamora Creative", initials: "ZC", budget: zamoraBudget, actual: zamoraActual, transactions: createYearData("Zamora Creative") },
 };
 
-const defaultUserForm = {
-  id: null as number | null,
-  name: "",
-  email: "",
-  password: "",
-  accessType: "Employee" as "Employee" | "Manager",
-};
+function getRecommendation(month: string, budgetAmount: number, actualAmount: number) {
+  const variance = actualAmount - budgetAmount;
+  if (variance <= 0) return `${month} is on plan. Keep the ${money.format(Math.abs(variance))} buffer and roll it forward for upcoming essential costs.`;
+  const savingTarget = Math.ceil(variance / 100) * 100;
+  return `${month} is ${money.format(variance)} over budget. Save at least ${money.format(savingTarget)} by pausing discretionary campaigns, reviewing subscriptions, and deferring non-essential travel.`;
+}
 
-type Employee = {
-  id: number;
-  name: string;
-  email: string;
-  access_type: string;
-};
+function getRecommendations(budget: number[], actual: number[]) {
+  return months.map((month, index) => ({ month, budget: budget[index], actual: actual[index], text: getRecommendation(month, budget[index], actual[index]) }));
+}
 
 export default function Home() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [requests, setRequests] = useState<VacationRequest[]>([]);
-  const [notifications, setNotifications] = useState<Array<{ id: number; message: string; type: string }>>([]);
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(defaultForm.employeeId);
-  const [form, setForm] = useState(defaultForm);
-  const [loginEmail, setLoginEmail] = useState("bob@company.com");
-  const [loginPassword, setLoginPassword] = useState("Password123!");
-  const [activeUser, setActiveUser] = useState<Employee | null>(null);
-  const [userForm, setUserForm] = useState(defaultUserForm);
-  const [showUserPassword, setShowUserPassword] = useState(false);
-  const [managerView, setManagerView] = useState<"reviews" | "users">("reviews");
-  const [message, setMessage] = useState("");
-
-  const employeeOptions = useMemo(
-    () => employees.filter((employee) => employee.access_type === "Employee"),
-    [employees],
-  );
-
-  const loadData = async () => {
-    const response = await fetch("/api/seed", { method: "POST" });
-    const data = await response.json();
-    setEmployees(data.employees ?? []);
-    setRequests((data.requests ?? []).map((request: any) => ({
-      ...request,
-      id: Number(request.id),
-      employeeId: Number(request.employee_id),
-      employeeName: request.employee_name,
-      startDate: request.start_date,
-      endDate: request.end_date,
-      reason: request.reason,
-      status: request.status,
-      submittedAt: request.submitted_at,
-      managerId: request.manager_id ? Number(request.manager_id) : null,
-      managerName: request.manager_name,
-      decisionComment: request.decision_comment,
-      createdAt: request.created_at,
-      updatedAt: request.updated_at,
-    })));
-
-    if (activeUser) {
-      const notificationsResponse = await fetch(`/api/notifications?employeeId=${activeUser.id}`);
-      const notificationsData = await notificationsResponse.json();
-      setNotifications(notificationsData.notifications ?? []);
-    }
+  const [workspaceName, setWorkspaceName] = useState("Acme Creative");
+  const workspace = workspaces[workspaceName];
+  const [transactions, setTransactions] = useState(workspace.transactions);
+  const [view, setView] = useState<View>("Overview");
+  const [period, setPeriod] = useState("September 2026");
+  const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState({ label: "", category: "Operations", amount: "", type: "Expense" as Transaction["type"] });
+  const periodIndex = period === "Full year 2026" ? -1 : fullMonths.indexOf(period.replace(" 2026", ""));
+  const visibleMonths = periodIndex === -1 ? months : [months[periodIndex]];
+  const visibleBudget = periodIndex === -1 ? workspace.budget : [workspace.budget[periodIndex]];
+  const visibleActual = periodIndex === -1 ? workspace.actual : [workspace.actual[periodIndex]];
+  const visibleTransactions = periodIndex === -1 ? transactions : transactions.filter((item) => item.month === months[periodIndex]);
+  const metrics = useMemo(() => {
+    const revenue = visibleTransactions.filter((item) => item.type === "Income").reduce((sum, item) => sum + item.amount, 0);
+    const expenses = visibleTransactions.filter((item) => item.type === "Expense").reduce((sum, item) => sum + item.amount, 0);
+    const annualBudget = visibleBudget.reduce((sum, item) => sum + item, 0);
+    return { revenue, expenses, ebitda: revenue - expenses, budget: annualBudget, execution: Math.round((expenses / annualBudget) * 100) };
+  }, [visibleTransactions, visibleBudget]);
+  const allRecommendations = getRecommendations(workspace.budget, workspace.actual);
+  const recommendations = periodIndex === -1 ? allRecommendations : allRecommendations.slice(Math.max(0, periodIndex - 2), periodIndex + 1);
+  const filteredTransactions = visibleTransactions.filter((item) => `${item.label} ${item.category} ${item.month}`.toLowerCase().includes(search.toLowerCase()));
+  const selectWorkspace = (name: string) => {
+    setWorkspaceName(name);
+    setTransactions(workspaces[name].transactions);
+    setSearch("");
   };
-
-  useEffect(() => {
-    void loadData();
-  }, []);
-
-  useEffect(() => {
-    if (employees.length > 0 && !selectedEmployeeId) {
-      setSelectedEmployeeId(String(employees[0]?.id ?? 1));
-    }
-  }, [employees, selectedEmployeeId]);
-
-  const handleLogin = async () => {
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-    });
-
-    const data = (await response.json()) as {
-      error?: string;
-      user?: { id?: number; name?: string; access_type?: string; accessType?: string };
-    };
-
-    if (!response.ok) {
-      setMessage(data.error ?? "Login failed.");
-      return;
-    }
-
-    const user = data.user ?? null;
-    if (!user) {
-      setMessage("Login returned no user information.");
-      return;
-    }
-
-    const nextUser = {
-      id: user.id ?? 1,
-      name: user.name ?? "User",
-      email: loginEmail,
-      access_type: user.access_type ?? user.accessType ?? "Employee",
-    };
-
-    setActiveUser(nextUser);
-    setSelectedEmployeeId(String(nextUser.id));
-    setManagerView("reviews");
-    setMessage(`Logged in as ${nextUser.name}.`);
-
-    const requestsResponse = await fetch("/api/seed", { method: "POST" });
-    const requestsData = await requestsResponse.json();
-    setRequests((requestsData.requests ?? []).map((request: any) => ({
-      ...request,
-      id: Number(request.id),
-      employeeId: Number(request.employee_id),
-      employeeName: request.employee_name,
-      startDate: request.start_date,
-      endDate: request.end_date,
-      reason: request.reason,
-      status: request.status,
-      submittedAt: request.submitted_at,
-      managerId: request.manager_id ? Number(request.manager_id) : null,
-      managerName: request.manager_name,
-      decisionComment: request.decision_comment,
-      createdAt: request.created_at,
-      updatedAt: request.updated_at,
-    })));
-
-    const notificationsResponse = await fetch(`/api/notifications?employeeId=${nextUser.id}`);
-    const notificationsData = await notificationsResponse.json();
-    setNotifications(notificationsData.notifications ?? []);
+  const addTransaction = () => {
+    const amount = Number(form.amount);
+    if (!form.label.trim() || amount <= 0) return;
+    setTransactions((current) => [...current, { id: Date.now(), date: "2026-09-18", month: "SEP", label: form.label.trim(), category: form.category, type: form.type, amount, essential: form.category !== "Discretionary" }]);
+    setForm({ label: "", category: "Operations", amount: "", type: "Expense" });
+    setShowForm(false);
   };
+  const navigate = (nextView: View) => setView(nextView);
 
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setActiveUser(null);
-    setNotifications([]);
-    setRequests([]);
-    setForm(defaultForm);
-    setSelectedEmployeeId(defaultForm.employeeId);
-    setUserForm(defaultUserForm);
-    setShowUserPassword(false);
-    setManagerView("reviews");
-    setMessage("");
-  };
-
-  const handleUserSubmit = async () => {
-    if (!userForm.name || !userForm.email || (!userForm.id && !userForm.password)) {
-      setMessage("Name, email, and password are required for a new user.");
-      return;
-    }
-
-    const response = await fetch("/api/users", {
-      method: userForm.id ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(userForm.id ? userForm : { ...userForm, id: undefined }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error ?? "Unable to save user.");
-      return;
-    }
-
-    setUserForm(defaultUserForm);
-    setMessage(userForm.id ? "User updated successfully." : "User added successfully.");
-    await loadData();
-  };
-
-  const handleDeleteUser = async (id: number) => {
-    if (!window.confirm("Delete this user and their vacation requests?")) {
-      return;
-    }
-
-    const response = await fetch(`/api/users?id=${id}`, { method: "DELETE" });
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error ?? "Unable to delete user.");
-      return;
-    }
-
-    if (userForm.id === id) {
-      setUserForm(defaultUserForm);
-    }
-    setMessage("User deleted successfully.");
-    await loadData();
-  };
-
-  const handleCreateRequest = async (submit: boolean) => {
-    if (!form.startDate || !form.endDate || !form.reason) {
-      setMessage("Please complete all fields before saving the request.");
-      return;
-    }
-
-    const validation = validateVacationDates(form.startDate, form.endDate);
-    if (!validation.ok) {
-      setMessage(validation.message);
-      return;
-    }
-
-    const response = await fetch("/api/requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        employeeId: Number(selectedEmployeeId),
-        startDate: form.startDate,
-        endDate: form.endDate,
-        reason: form.reason,
-        action: submit ? "submit" : "save",
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error ?? "Unable to create request.");
-      return;
-    }
-
-    setMessage(
-      submit ? "Vacation request submitted for manager review." : "Draft request saved.",
-    );
-    setForm(defaultForm);
-    await loadData();
-  };
-
-  const handleDecision = async (
-    requestId: number,
-    action: "approve" | "reject" | "cancel",
-    comment: string,
-    managerId: number,
-  ) => {
-    const response = await fetch(`/api/requests/${requestId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, managerId, comment }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setMessage(data.error ?? "Unable to decide request.");
-      return;
-    }
-
-    const outcome = data.notification ?? "Request updated.";
-    setMessage(`${action === "approve" ? "Approved" : "Rejected"} successfully. ${outcome}`);
-    await loadData();
-  };
-
-  const canReview = (request: VacationRequest) =>
-    request.status === "Submitted" && activeUser?.access_type === "Manager";
-
-  const employeeRequests = requests.filter(
-    (request) => request.employeeId === activeUser?.id,
-  );
-
-  const getStatusDisplay = (status: VacationRequest["status"]) =>
-    status === "Cancelled" ? "Canceled" : status;
-
-  return (
-    <main className={styles["page-shell"]}>
-      <div className={styles.panel}>
-        <header className={styles["page-header"]}>
-          <div>
-            <p className={styles.eyebrow}>Vacation Request System</p>
-            <h1>Team leave management</h1>
-          </div>
-          <div className={styles["user-box"]}>
-            <strong>{activeUser ? activeUser.name : "Guest mode"}</strong>
-            <span>{activeUser ? activeUser.access_type : "No session"}</span>
-            {activeUser && (
-              <button className={styles["logout-button"]} onClick={() => void handleLogout()}>
-                Log out
-              </button>
-            )}
-          </div>
-        </header>
-
-        {!activeUser && (
-          <section className={styles["login-card"]}>
-            <h2>Login</h2>
-            <div className={`${styles.fields} ${styles.inline}`}>
-              <input
-                className={styles["field-input"]}
-                value={loginEmail}
-                onChange={(event) => setLoginEmail(event.target.value)}
-                placeholder="Email"
-              />
-              <input
-                className={styles["field-input"]}
-                type="password"
-                value={loginPassword}
-                onChange={(event) => setLoginPassword(event.target.value)}
-                placeholder="Password"
-              />
-              <button className={styles["primary-button"]} onClick={() => void handleLogin()}>Log in</button>
-            </div>
-          </section>
-        )}
-
-        {activeUser?.access_type === "Employee" && (
-          <section className={styles["content-grid"]}>
-            <div className={styles.card}>
-              <div className={styles["section-heading"]}>
-                <h2>My vacation</h2>
-                <p className={styles["section-intro"]}>Request time off and track its status.</p>
-              </div>
-              <div className={styles.fields}>
-                <label>
-                  Start date
-                  <input
-                    className={styles["field-input"]}
-                    type="date"
-                    aria-label="Vacation start date"
-                    value={form.startDate}
-                    onClick={(event) => event.currentTarget.showPicker?.()}
-                    onChange={(event) => setForm({ ...form, startDate: event.target.value })}
-                  />
-                </label>
-                <label>
-                  End date
-                  <input
-                    className={styles["field-input"]}
-                    type="date"
-                    aria-label="Vacation end date"
-                    value={form.endDate}
-                    onClick={(event) => event.currentTarget.showPicker?.()}
-                    onChange={(event) => setForm({ ...form, endDate: event.target.value })}
-                  />
-                </label>
-                <label>
-                  Reason
-                  <textarea className={styles["field-textarea"]} value={form.reason} rows={4} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
-                </label>
-                <div className={styles.actions}>
-                  <button className={styles["secondary-button"]} onClick={() => void handleCreateRequest(false)}>Save draft</button>
-                  <button className={styles["primary-button"]} onClick={() => void handleCreateRequest(true)}>Submit request</button>
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.card}>
-              <h2>My requests</h2>
-              <div className={styles["request-list"]}>
-                {employeeRequests.map((request) => (
-                <article key={request.id} className={styles["request-item"]}>
-                  <div className={styles["request-topline"]}>
-                    <strong>{request.employeeName}</strong>
-                    <span className={`${styles["status-badge"]} ${styles[request.status.toLowerCase()]}`}>
-                      {getStatusDisplay(request.status)}
-                    </span>
-                  </div>
-                  <p className={styles["request-state"]}>
-                    State: <strong>{getStatusDisplay(request.status)}</strong>
-                  </p>
-                  <p>
-                    {request.startDate} to {request.endDate}
-                  </p>
-                  <p>{request.reason}</p>
-                  {request.decisionComment && <p className={styles.comment}>Comment: {request.decisionComment}</p>}
-                </article>
-                ))}
-              </div>
-            </div>
-        </section>
-        )}
-
-        {activeUser?.access_type === "Manager" && (
-          <section className={styles.card}>
-            <div className={styles["workspace-header"]}>
-              <div>
-                <div className={styles["workspace-title"]}>
-                  <h2>{managerView === "reviews" ? "Employee vacation review" : "Employee management"}</h2>
-                  <p className={styles["section-intro"]}>
-                  {managerView === "reviews"
-                    ? "Review vacation requests submitted by employees."
-                    : "Create, read, update, and delete employee accounts."}
-                  </p>
-                </div>
-              </div>
-              <nav className={styles["screen-tabs"]} aria-label="Manager screens">
-                <button className={managerView === "reviews" ? styles["tab-button-active"] : styles["tab-button"]} onClick={() => setManagerView("reviews")}>Vacation review</button>
-                <button className={managerView === "users" ? styles["tab-button-active"] : styles["tab-button"]} onClick={() => setManagerView("users")}>Employees</button>
-              </nav>
-            </div>
-
-            {managerView === "users" && (
-              <div className={styles["user-management"]}>
-                <div className={styles["management-header"]}>
-                  <div>
-                    <h3>Employee accounts</h3>
-                    <p className={styles["section-intro"]}>Add employees, update credentials, or remove users.</p>
-                  </div>
-                  <button className={styles["secondary-button"]} onClick={() => { setUserForm(defaultUserForm); setShowUserPassword(false); }}>New user</button>
-                </div>
-                <div className={styles["user-form"]}>
-                  <input className={styles["field-input"]} placeholder="Full name" value={userForm.name} onChange={(event) => setUserForm({ ...userForm, name: event.target.value })} />
-                  <input className={styles["field-input"]} type="email" placeholder="Email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} />
-                  <div className={styles["password-field"]}>
-                    <input className={styles["field-input"]} type={showUserPassword ? "text" : "password"} placeholder={userForm.id ? "New password (optional)" : "Password"} value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} />
-                    <button className={styles["password-toggle"]} type="button" onClick={() => setShowUserPassword((visible) => !visible)} aria-label={showUserPassword ? "Hide password" : "Show password"}>
-                      {showUserPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                  <select className={styles["field-select"]} value={userForm.accessType} onChange={(event) => setUserForm({ ...userForm, accessType: event.target.value as "Employee" | "Manager" })}>
-                    <option value="Employee">Employee</option>
-                    <option value="Manager">Manager</option>
-                  </select>
-                  <button className={styles["primary-button"]} onClick={() => void handleUserSubmit()}>{userForm.id ? "Update user" : "Add user"}</button>
-                </div>
-                <div className={styles["user-list"]}>
-                  {employees.map((employee) => (
-                    <div className={styles["user-row"]} key={employee.id}>
-                      <div>
-                        <strong>{employee.name}</strong>
-                        <span>{employee.email} · {employee.access_type}</span>
-                      </div>
-                      <div className={styles.actions}>
-                        <button className={styles["secondary-button"]} onClick={() => { setUserForm({ id: employee.id, name: employee.name, email: employee.email, password: "", accessType: employee.access_type as "Employee" | "Manager" }); setShowUserPassword(false); }}>Edit</button>
-                        <button className={styles["danger-button"]} onClick={() => void handleDeleteUser(employee.id)}>Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {managerView === "reviews" && (
-              <>
-                <div className={styles["request-list"]}>
-                  {requests.length === 0 && <p className={styles["empty-state"]}>No employee vacation requests yet.</p>}
-                  {requests.map((request) => (
-                    <article key={`request-${request.id}`} className={styles["request-item"]}>
-                      <div className={styles["request-topline"]}>
-                        <strong>{request.employeeName}</strong>
-                        <span className={`${styles["status-badge"]} ${styles[request.status.toLowerCase()]}`}>{request.status}</span>
-                      </div>
-                      <p>{request.startDate} to {request.endDate}</p>
-                      <p>{request.reason}</p>
-                      {request.decisionComment && <p className={styles.comment}>Comment: {request.decisionComment}</p>}
-                      {canReview(request) && (
-                        <div className={styles["decision-actions"]}>
-                          <input className={styles["decision-comment"]} type="text" placeholder="Decision comment" id={`comment-${request.id}`} defaultValue="" />
-                          <div className={`${styles.actions} ${styles.compact}`}>
-                            <button className={styles["success-button"]} onClick={() => { const comment = (document.getElementById(`comment-${request.id}`) as HTMLInputElement | null)?.value ?? ""; void handleDecision(request.id, "approve", comment, activeUser.id); }}>Approve</button>
-                            <button className={styles["danger-button"]} onClick={() => { const comment = (document.getElementById(`comment-${request.id}`) as HTMLInputElement | null)?.value ?? ""; void handleDecision(request.id, "reject", comment, activeUser.id); }}>Reject</button>
-                            <button className={styles["secondary-button"]} onClick={() => { const comment = (document.getElementById(`comment-${request.id}`) as HTMLInputElement | null)?.value ?? ""; void handleDecision(request.id, "cancel", comment, activeUser.id); }}>Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              </>
-            )}
-          </section>
-        )}
-
-        {message && <div className={styles.message}>{message}</div>}
-
-        {notifications.length > 0 && (
-          <div className={styles["notification-panel"]}>
-            <h3>Notifications</h3>
-            <ul>
-              {notifications.map((notification) => (
-                <li key={notification.id}>{notification.message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+  return <main className={styles.shell}>
+    <aside className={styles.sidebar}>
+      <div className={styles.brand}><span className={styles.brandMark}>M</span> monarch<span className={styles.brandDot}>.</span></div>
+      <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span><b>{workspace.name}</b><small>Finance workspace</small></span><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Acme Creative</option><option>Zamora Creative</option></select></label>
+      <nav className={styles.nav} aria-label="Primary navigation">{(["Overview", "Transactions", "Budgets", "Reports"] as View[]).map((item) => <button key={item} className={view === item ? styles.activeNav : ""} onClick={() => navigate(item)}>{item === "Overview" ? "◒" : item === "Transactions" ? "↔" : item === "Budgets" ? "▥" : "◫"} &nbsp; {item}</button>)}</nav>
+      <div className={styles.sidebarBottom}><button>⚙ &nbsp; Settings</button><div className={styles.profile}><span className={styles.avatar}>JD</span><span><b>Jordan Davis</b><small>Admin</small></span><span>•••</span></div></div>
+    </aside>
+    <section className={styles.content}>
+      <header className={styles.topbar}><span className={styles.breadcrumb}>Workspace <i>/</i> <b>{view}</b></span><div className={styles.topActions}><button className={styles.quiet}>♧</button><button className={styles.help}>?</button><button className={styles.addButton} onClick={() => setShowForm(true)}>+ Add transaction</button></div></header>
+      <div className={styles.mainArea}>
+        <div className={styles.intro}><div><p className={styles.kicker}>Financial control center</p><h1>{view === "Overview" ? "Good morning, Jordan." : view}</h1><p className={styles.subtitle}>{view === "Overview" ? `Here is what is happening in ${period.toLowerCase()}.` : `Review your ${view.toLowerCase()} for ${period.toLowerCase()}.`}</p></div><label className={styles.period}>Period<select value={period} onChange={(event) => setPeriod(event.target.value)}><option>Full year 2026</option>{fullMonths.map((month) => <option key={month}>{month} 2026</option>)}</select></label></div>
+        {view === "Overview" && <Overview metrics={metrics} actual={visibleActual} budget={visibleBudget} transactions={visibleTransactions} navigate={navigate} period={period} visibleMonths={visibleMonths} />}
+        {view === "Transactions" && <Transactions transactions={filteredTransactions} search={search} setSearch={setSearch} />}
+        {view === "Budgets" && <Budgets budget={visibleBudget} actual={visibleActual} visibleMonths={visibleMonths} />}
+        {view === "Reports" && <Reports metrics={metrics} transactions={visibleTransactions} budget={visibleBudget} actual={visibleActual} visibleMonths={visibleMonths} />}
+        <Recommendations recommendations={recommendations} />
+        <footer className={styles.footer}><span>Demo data: January–December 2026</span><span className={styles.green}>● &nbsp;All systems operational</span><span>© 2026 Monarch Finance</span></footer>
       </div>
-    </main>
-  );
+    </section>
+    {showForm && <div className={styles.backdrop} onClick={() => setShowForm(false)}><section className={styles.modal} onClick={(event) => event.stopPropagation()}><div className={styles.modalHead}><div><p className={styles.kicker}>Ledger entry</p><h2>Add transaction</h2></div><button onClick={() => setShowForm(false)} aria-label="Close">×</button></div><label>Description<input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="e.g. Office rent" /></label><label>Category<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>Operations</option><option>People</option><option>Facilities</option><option>Marketing</option><option>Discretionary</option><option>Revenue</option></select></label><div className={styles.formSplit}><label>Amount<input type="number" min="0" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="0.00" /></label><label>Type<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction["type"] })}><option>Expense</option><option>Income</option></select></label></div><div className={styles.modalActions}><button className={styles.cancel} onClick={() => setShowForm(false)}>Cancel</button><button className={styles.addButton} onClick={addTransaction}>Save transaction</button></div></section></div>}
+  </main>;
 }
+
+function Overview({ metrics, actual, budget, transactions, navigate, period, visibleMonths }: { metrics: { revenue: number; expenses: number; ebitda: number; budget: number; execution: number }; actual: number[]; budget: number[]; transactions: Transaction[]; navigate: (view: View) => void; period: string; visibleMonths: string[] }) {
+  return <><div className={styles.kpis}><article><label>Total revenue <span>↗</span></label><strong>{money.format(metrics.revenue)}</strong><small className={styles.green}>+12.8% <em>vs prior year</em></small></article><article><label>Total expenses <span>↘</span></label><strong>{money.format(metrics.expenses)}</strong><small className={styles.red}>+4.2% <em>vs prior year</em></small></article><article className={styles.darkCard}><label>EBITDA <span>◈</span></label><strong>{money.format(metrics.ebitda)}</strong><small className={styles.lightGreen}>+18.6% <em>annual margin</em></small></article><article><label>Budget remaining <span>◎</span></label><strong>{money.format(metrics.budget - metrics.expenses)}</strong><div className={styles.progress}><span style={{ width: `${metrics.execution}%` }} /></div><small>{metrics.execution}% executed <em>of {money.format(metrics.budget)}</em></small></article></div><div className={styles.twoCol}><article className={styles.panel}><div className={styles.panelHead}><div><h2>Cash flow overview</h2><p>Budget vs actual spend across 2026</p></div><div className={styles.legend}><span><i className={styles.budgetDot} /> Budget</span><span><i className={styles.actualDot} /> Actual</span></div></div><div className={styles.chart}><div className={styles.axis}><span>$40k</span><span>$30k</span><span>$20k</span><span>$10k</span><span>$0</span></div><div className={styles.chartBody}><div className={styles.lines}><i /><i /><i /><i /><i /></div><div className={styles.bars}>{visibleMonths.map((month, index) => <div className={styles.barGroup} key={month}><div className={styles.barPair}><span className={styles.budgetBar} style={{ height: `${budget[index] / 400}%` }} title={`${month} budget: ${money.format(budget[index])}`} aria-label={`${month} budget: ${money.format(budget[index])}`} /><span className={styles.actualBar} style={{ height: `${actual[index] / 400}%` }} title={`${month} actual: ${money.format(actual[index])}`} aria-label={`${month} actual: ${money.format(actual[index])}`} /></div><small>{month}</small></div>)}</div></div></div><div className={styles.chartFooter}><b>{money.format(actual.reduce((sum, item) => sum + item, 0))}</b> annual actual spend <strong>Target {money.format(budget.reduce((sum, item) => sum + item, 0))}</strong></div></article><article className={styles.panel}><div className={styles.panelHead}><div><h2>Spend by category</h2><p>{period} allocation</p></div></div><div className={styles.donutArea}><div className={styles.donut}><span><b>100%</b><small>of spend</small></span></div><div className={styles.categoryList}><span><i className={styles.dotGreen} /> People <b>42%</b></span><span><i className={styles.dotYellow} /> Facilities <b>27%</b></span><span><i className={styles.dotBlue} /> Operations <b>20%</b></span><span><i className={styles.dotLilac} /> Discretionary <b>11%</b></span></div></div></article></div><div className={styles.twoCol}><article className={styles.panel}><div className={styles.panelHead}><div><h2>Budget variance</h2><p>Annual cost center performance</p></div><button className={styles.textButton} onClick={() => navigate("Budgets")}>View budgets →</button></div><VarianceRows /></article><article className={styles.panel}><div className={styles.panelHead}><div><h2>Recent activity</h2><p>Latest of {transactions.length} transactions</p></div><button className={styles.textButton} onClick={() => navigate("Transactions")}>See all →</button></div><Activity transactions={transactions.slice(-4).reverse()} /></article></div></>;
+}
+
+function Recommendations({ recommendations }: { recommendations: Recommendation[] }) {
+  const overBudget = recommendations.filter((item) => item.actual > item.budget);
+  return <article className={styles.panel}>
+    <div className={styles.panelHead}><div><h2>Monthly saving recommendations</h2><p>{overBudget.length ? `${overBudget.length} month${overBudget.length === 1 ? "" : "s"} need a spending adjustment.` : "Every month is within the planned budget."}</p></div><span className={styles.recommendationBadge}>{overBudget.length ? "Action needed" : "On track"}</span></div>
+    <div className={styles.recommendationList}>{recommendations.map((item) => <div className={styles.recommendation} key={item.month}><div><b>{item.month}</b><small>{money.format(item.actual)} spent of {money.format(item.budget)}</small></div><p className={item.actual > item.budget ? styles.red : styles.green}>{item.text}</p></div>)}</div>
+  </article>;
+}
+
+function VarianceRows() { return <div className={styles.table}><div className={styles.tableHeader}><span>Cost center</span><span>Budget</span><span>Actual</span><span>Variance</span><span>Status</span></div>{[["People", 182400, 175200, 7200, "Under"], ["Facilities", 65000, 52200, 12800, "Under"], ["Marketing", 42000, 48600, -6600, "Over"], ["Operations", 89000, 72000, 17000, "Under"]].map(([name, plan, spent, variance, status]) => <div className={styles.tableRow} key={String(name)}><b>{name}</b><span>{money.format(Number(plan))}</span><span>{money.format(Number(spent))}</span><span className={Number(variance) < 0 ? styles.red : styles.green}>{Number(variance) < 0 ? "-" : "+"}{money.format(Math.abs(Number(variance)))}</span><span className={Number(variance) < 0 ? styles.statusOver : styles.statusUnder}>{status}</span></div>)}</div>; }
+
+function Activity({ transactions }: { transactions: Transaction[] }) { return <div className={styles.activityList}>{transactions.map((item) => <div className={styles.activity} key={item.id}><span className={item.type === "Income" ? styles.incomeIcon : styles.expenseIcon}>{item.type === "Income" ? "↗" : "↘"}</span><div><b>{item.label}</b><small>{item.category} · {item.month} 2026</small></div><strong className={item.type === "Income" ? styles.green : ""}>{item.type === "Income" ? "+" : "-"}{money.format(item.amount)}</strong></div>)}</div>; }
+
+function Transactions({ transactions, search, setSearch }: { transactions: Transaction[]; search: string; setSearch: (value: string) => void }) { return <article className={styles.panel}><div className={styles.panelHead}><div><h2>Transaction ledger</h2><p>{transactions.length} demo entries across the full year</p></div><input className={styles.search} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search transactions" /></div><div className={styles.ledger}><div className={styles.tableHeader}><span>Date</span><span>Description</span><span>Category</span><span>Type</span><span>Amount</span></div>{transactions.map((item) => <div className={styles.tableRow} key={item.id}><span>{item.date}</span><b>{item.label}</b><span>{item.category}</span><span className={item.type === "Income" ? styles.green : styles.red}>{item.type}</span><strong className={item.type === "Income" ? styles.green : ""}>{item.type === "Income" ? "+" : "-"}{money.format(item.amount)}</strong></div>)}</div></article>; }
+
+function Budgets({ budget, actual, visibleMonths }: { budget: number[]; actual: number[]; visibleMonths: string[] }) { return <><div className={styles.summaryStrip}><div><small>Annual allocation</small><strong>{money.format(budget.reduce((sum, item) => sum + item, 0))}</strong></div><div><small>Actual spend</small><strong>{money.format(actual.reduce((sum, item) => sum + item, 0))}</strong></div><div><small>Remaining</small><strong className={styles.green}>{money.format(budget.reduce((sum, item) => sum + item, 0) - actual.reduce((sum, item) => sum + item, 0))}</strong></div></div><article className={styles.panel}><div className={styles.panelHead}><div><h2>Monthly budget plan</h2><p>Execution tracking for the selected period</p></div></div><div className={styles.monthBudgetList}>{visibleMonths.map((month, index) => { const percent = Math.round((actual[index] / budget[index]) * 100); return <div className={styles.monthBudget} key={month}><b>{month}</b><div><span><i style={{ width: `${Math.min(percent, 100)}%` }} /></span><small>{money.format(actual[index])} / {money.format(budget[index])}</small></div><strong className={percent > 100 ? styles.red : styles.green}>{percent}%</strong></div>; })}</div></article></>; }
+
+function Reports({ metrics, transactions, budget, actual, visibleMonths }: { metrics: { revenue: number; expenses: number; ebitda: number }; transactions: Transaction[]; budget: number[]; actual: number[]; visibleMonths: string[] }) { const essential = transactions.filter((item) => item.type === "Expense" && item.essential).reduce((sum, item) => sum + item.amount, 0); const discretionary = metrics.expenses - essential; return <><div className={styles.reportGrid}><article className={styles.reportCard}><small>Net income</small><strong>{money.format(metrics.ebitda)}</strong><span className={styles.green}>+18.6% year over year</span></article><article className={styles.reportCard}><small>Essential spend</small><strong>{money.format(essential)}</strong><span>{Math.round((essential / metrics.expenses) * 100)}% of expenses</span></article><article className={styles.reportCard}><small>Discretionary spend</small><strong>{money.format(discretionary)}</strong><span>{Math.round((discretionary / metrics.expenses) * 100)}% of expenses</span></article></div><div className={styles.twoCol}><article className={styles.panel}><h2>Annual performance</h2><p>Revenue, spend, and operating result</p><div className={styles.reportBars}>{visibleMonths.map((month, index) => <div key={month}><i style={{ height: `${(actual[index] / 40000) * 100}%` }} title={`${month} actual: ${money.format(actual[index])}`} aria-label={`${month} actual: ${money.format(actual[index])}`} /><span style={{ height: `${((budget[index] - actual[index]) / 40000) * 100}%` }} title={`${month} remaining: ${money.format(Math.max(budget[index] - actual[index], 0))}`} aria-label={`${month} remaining: ${money.format(Math.max(budget[index] - actual[index], 0))}`} /><small>{month}</small></div>)}</div></article><article className={styles.panel}><h2>Financial health</h2><p>Executive indicators from the demo ledger</p><div className={styles.healthList}><span>Budget execution <b>{Math.round((actual.reduce((a, b) => a + b, 0) / budget.reduce((a, b) => a + b, 0)) * 100)}%</b></span><span>Revenue coverage <b>{(metrics.revenue / metrics.expenses).toFixed(1)}x</b></span><span>Transactions tracked <b>{transactions.length}</b></span><span>Positive months <b>{actual.filter((item, index) => item <= budget[index]).length}/{visibleMonths.length}</b></span></div></article></div></>; }
