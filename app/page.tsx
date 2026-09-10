@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 
 type View = "Overview" | "Transactions" | "Budgets" | "Reports" | "Settings";
@@ -95,6 +95,10 @@ export default function Home() {
 
 function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin: boolean }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
+  const [showInactivityPrompt, setShowInactivityPrompt] = useState(false);
+  const logoutRef = useRef(logout);
+  const promptRef = useRef(false);
+  const resetInactivityRef = useRef<() => void>(() => undefined);
   const [workspaceName, setWorkspaceName] = useState("Acme Creative");
   const workspace = workspaces[workspaceName];
   const [transactions, setTransactions] = useState(workspace.transactions);
@@ -105,6 +109,26 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
   const [categories, setCategories] = useState(["Operations", "People", "Facilities", "Marketing", "Discretionary", "Revenue"]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({ label: "", category: "Operations", amount: "", month: "SEP", type: "Expense" as Transaction["type"] });
+  useEffect(() => { logoutRef.current = logout; }, [logout]);
+  useEffect(() => { promptRef.current = showInactivityPrompt; }, [showInactivityPrompt]);
+  useEffect(() => {
+    let warningTimer: ReturnType<typeof setTimeout>;
+    let logoutTimer: ReturnType<typeof setTimeout>;
+    const clearTimers = () => { clearTimeout(warningTimer); clearTimeout(logoutTimer); };
+    const scheduleInactivity = () => {
+      clearTimers();
+      warningTimer = setTimeout(() => {
+        setShowInactivityPrompt(true);
+        logoutTimer = setTimeout(() => logoutRef.current(), 60 * 1000);
+      }, 3 * 60 * 1000);
+    };
+    resetInactivityRef.current = scheduleInactivity;
+    const handleActivity = () => { if (!promptRef.current) scheduleInactivity(); };
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((event) => window.addEventListener(event, handleActivity, { passive: true }));
+    scheduleInactivity();
+    return () => { clearTimers(); events.forEach((event) => window.removeEventListener(event, handleActivity)); };
+  }, []);
   useEffect(() => { fetch("/api/budget/categories").then((response) => response.ok ? response.json() : null).then((data) => { if (data?.categories) setCategories(data.categories.map((category: { name: string }) => category.name)); }); }, []);
   const periodIndex = period === "Full year 2026" ? -1 : fullMonths.indexOf(period.replace(" 2026", ""));
   const baselineExpenses = getMonthlyExpenses(workspace.transactions);
@@ -157,7 +181,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
    };
    const navigate = (nextView: View) => setView(nextView);
 
-   return <main className={styles.shell}>
+  return <main className={styles.shell}>
      <aside className={`${styles.sidebar} ${sidebarHidden ? styles.sidebarHidden : ""}`}>
       <div className={styles.brand}><span className={styles.brandMark}>AI</span> AIBudget<span className={styles.brandDot}>.</span></div>
       <label className={styles.workspace}><span className={styles.avatar}>{workspace.initials}</span><span className={styles.workspaceInfo}><b>Finance Workspace</b><select aria-label="Select finance workspace" value={workspaceName} onChange={(event) => selectWorkspace(event.target.value)}><option>Acme Creative</option><option>Zamora Creative</option></select></span></label>
@@ -177,6 +201,7 @@ function BudgetHome({ logout, isAdmin }: { logout: () => Promise<void>; isAdmin:
          <footer className={styles.footer}><span>Demo data: January–December 2026</span><span className={styles.green}>● &nbsp;All systems operational</span><span>© 2026 Monarch Finance</span></footer>
        </div>
      </section>
+    {showInactivityPrompt && <div className={styles.backdrop}><section className={styles.modal} role="alertdialog" aria-modal="true" aria-labelledby="inactivity-title"><div className={styles.modalHead}><div><p className={styles.kicker}>Session timeout</p><h2 id="inactivity-title">Are you still there?</h2></div></div><p className={styles.subtitle}>You have been inactive for 3 minutes. Continue within 1 minute to keep your session open.</p><div className={styles.modalActions}><button className={styles.addButton} onClick={() => { setShowInactivityPrompt(false); resetInactivityRef.current(); }}>Continue session</button><button className={styles.cancel} onClick={logout}>Sign out</button></div></section></div>}
     {showForm && <div className={styles.backdrop} onClick={() => setShowForm(false)}><section className={styles.modal} onClick={(event) => event.stopPropagation()}><div className={styles.modalHead}><div><p className={styles.kicker}>Ledger entry</p><h2>{editingId === null ? "Add transaction" : "Edit transaction"}</h2></div><button onClick={() => setShowForm(false)} aria-label="Close">×</button></div><label>Description<input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="e.g. Office rent" /></label><label>Category<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label><div className={styles.formSplit}><label>Amount<input type="number" min="0" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="0.00" /></label><label>Type<select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction["type"] })}><option>Expense</option><option>Income</option></select></label></div>
  <label>Month<select value={form.month} onChange={(event) => setForm({ ...form, month: event.target.value })}>{months.map((month) => <option key={month}>{month}</option>)}</select></label>
  <div className={styles.modalActions}><button className={styles.cancel} onClick={() => setShowForm(false)}>Cancel</button><button className={styles.addButton} onClick={addTransaction}>{editingId === null ? "Save transaction" : "Update transaction"}</button></div></section></div>}
