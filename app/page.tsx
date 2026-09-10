@@ -58,9 +58,14 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const resetLogin = () => {
+    setUsername("");
+    setPassword("");
+    setError("");
+  };
 
   useEffect(() => {
-    fetch("/api/budget/auth/me").then(async (response) => { if (!response.ok) { setStatus("login"); return; } const body = await response.json(); setIsAdmin(Boolean(body.user?.isAdmin)); setStatus("authenticated"); }).catch(() => setStatus("login"));
+    fetch("/api/budget/auth/me").then(async (response) => { if (!response.ok) { resetLogin(); setStatus("login"); return; } const body = await response.json(); setIsAdmin(Boolean(body.user?.isAdmin)); setStatus("authenticated"); }).catch(() => { resetLogin(); setStatus("login"); });
   }, []);
 
   const login = async (event: React.FormEvent) => {
@@ -78,10 +83,7 @@ export default function Home() {
   };
 
   const logout = async () => {
-    await fetch("/api/budget/auth/logout", { method: "POST" });
-    setUsername("");
-    setPassword("");
-    setError("");
+    try { await fetch("/api/budget/auth/logout", { method: "POST" }); } finally { resetLogin(); }
     setIsAdmin(false);
     setStatus("login");
   };
